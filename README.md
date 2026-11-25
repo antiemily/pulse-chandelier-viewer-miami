@@ -1,5 +1,7 @@
 # Pulse Chandelier: Layout Viewer
 
+web app: https://antiemily.github.io/pulse-chandelier-viewer-miami/
+
 Interactive 3D viewer of the Pulse Chandelier (Miami) by Rafael Lozano-Hemmer / Antimodular.
 
 It shows the position, ID and cable length of each of the 300 bulbs hanging from the canopy. Data: `pulsechandelier_miami_nov25.csv`. The layout is subject to change.
