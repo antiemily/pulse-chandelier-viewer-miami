@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pulse Chandelier Viewer</title>
+<style>
+/* VOICE: same terminal-style tool as the Pulse Tapestry viewer — technical, quiet.
+   IDEA: a site survey of the chandelier: 300 drops hanging from one flat canopy.
+   PICTURE: full-bleed 3D canvas of mounts, drops and bulbs.
+   COLOUR and TYPE: near-black ground, mono UI, cable-length gradient.
+   LAYOUT: controls top-left, bounds/legend top-right, checks bottom-right. */
+:root{
+  color-scheme: dark;
+  --bg:#0a0a0f; --ink:#cccccc; --ink-hi:#eeeeee; --ink-2:#aaaaaa; --label:#888888; --hint:#5d5d66; --dim:#777777;
+  --field:#111111; --field-line:#333333; --box:rgba(10,10,18,0.9); --box-line:#383848;
+  --sel:#ff44cc; --measure:#ffcc33; --close:#ff7a45; --cmp:#9a9aff;
+  --mono:"Courier New",Courier,ui-monospace,monospace;
+}
+*{margin:0; padding:0; box-sizing:border-box;}
+html,body{height:100%;}
+body{background:var(--bg); color:var(--ink); font-family:var(--mono); overflow:hidden; font-size:12px;
+  padding-top:env(safe-area-inset-top,0px);}
+canvas{display:block;}
+#stage{position:fixed; inset:0; width:100%; height:100%; touch-action:none; cursor:grab;}
+#stage.dragging{cursor:grabbing;} #stage.measuring{cursor:crosshair;}
+
+#ui{position:fixed; top:calc(16px + env(safe-area-inset-top,0px)); left:16px; z-index:10; display:flex; flex-direction:column; gap:8px;
+  width:300px; max-width:calc(100% - 32px); max-height:calc(100% - 90px); overflow-y:auto; padding-right:4px;}
+#ui .top{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+#ui label, #ui .lab{font-size:11px; color:var(--label); text-transform:uppercase; letter-spacing:1px;}
+#ui .hint{font-size:10px; color:var(--hint); line-height:1.4;}
+#ui select, #ui input[type=number], #ui input[type=text]{background:var(--field); border:1px solid var(--field-line); color:var(--ink); padding:4px 8px; font:12px var(--mono); width:100%;}
+#ui input[type=range]{width:100%; accent-color:#7799cc;}
+#ui input[type=checkbox]{margin-right:6px; vertical-align:middle; accent-color:#7799cc;}
+#ui .chk{text-transform:none; letter-spacing:0; color:var(--ink-2); font-size:11px; cursor:pointer;}
+.btn{background:var(--field); border:1px solid var(--field-line); color:var(--ink); padding:6px 10px; font:12px var(--mono); cursor:pointer;}
+.btn:hover{border-color:#556;} .btn.on{border-color:var(--measure); color:var(--measure);}
+.btn.wide{width:100%; text-align:left;}
+#ui .grp{display:flex; flex-direction:column; gap:4px;}
+#ui .rowsel{display:flex; gap:4px;} #ui .rowsel > *{flex:1;} #ui .rowsel .btn{padding:4px 6px;}
+#ui.collapsed #uiBody{display:none;}
+#uiBody{display:flex; flex-direction:column; gap:10px;}
+.file{display:none;}
+
+#right{position:fixed; z-index:10; top:calc(16px + env(safe-area-inset-top,0px)); right:16px; bottom:calc(16px + env(safe-area-inset-bottom,0px)); width:330px;
+  display:flex; flex-direction:column; gap:12px; pointer-events:none;}
+#right > *{pointer-events:auto;}
+#legend{font-size:11px; color:var(--dim); line-height:1.9; flex:0 0 auto; max-height:40%; overflow-y:auto;}
+#legend b{color:var(--ink); font-weight:normal;}
+.legend-bar{height:8px; width:200px; margin:4px 0 2px;}
+.legend-ends{display:flex; justify-content:space-between; width:200px; font-size:10px;}
+
+#rigStats{margin-top:auto; flex:0 1 auto; min-height:0; overflow-y:auto; font-size:11px; color:var(--ink-2); line-height:1.65;
+  background:var(--box); border:1px solid var(--box-line); padding:10px 14px 12px;}
+#rigStats b{color:#dddddd; font-weight:normal;}
+#rigStats .h{color:var(--label); letter-spacing:1px; text-transform:uppercase; margin-top:8px;}
+#rigStats .h:first-child{margin-top:0; cursor:pointer;}
+#rigStats .s{color:var(--dim);}
+#rigStats .ok{color:#66cc88;} #rigStats .warn{color:#ffaa55;}
+#rigStats.collapsed .body{display:none;}
+#rigStats a{color:var(--ink); cursor:pointer; text-decoration:underline dotted;}
+#hist{width:100%; height:70px; display:block; margin-top:4px;}
+
+#info{position:fixed; bottom:calc(16px + env(safe-area-inset-bottom,0px)); left:16px; z-index:10; font-size:11px; color:var(--hint); line-height:1.6; max-width:560px;}
+#info code{font-family:inherit; color:var(--label);}
+#tooltip{position:fixed; z-index:20; pointer-events:none; background:rgba(0,0,0,0.88); border:1px solid #333; padding:8px 12px;
+  font-size:11px; line-height:1.7; color:var(--ink-hi); display:none; white-space:pre; max-width:min(92vw,460px); overflow:hidden;}
+#measureOut{position:fixed; z-index:11; left:50%; transform:translateX(-50%); top:calc(16px + env(safe-area-inset-top,0px)); background:rgba(0,0,0,0.88);
+  border:1px solid var(--measure); padding:6px 12px; font-size:11px; color:var(--ink-hi); display:none; white-space:nowrap;}
+#measureOut b{color:var(--measure); font-weight:normal;}
+#err{position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#220000; border:1px solid #663333; padding:20px; color:#ffaaaa; max-width:90vw; display:none; z-index:100; white-space:pre-wrap; cursor:pointer;}
+#drop{position:fixed; inset:0; z-index:90; display:none; align-items:center; justify-content:center; background:rgba(10,10,15,0.8); border:2px dashed #445; color:var(--ink); font-size:14px;}
+#drop.on{display:flex;}
+:focus-visible{outline:1px solid #7799cc; outline-offset:1px;}
+@media (max-width: 760px){
+  #ui{width:auto; right:16px; max-height:55%; background:rgba(10,10,15,0.94); padding:8px;}
+  #legend{display:none;}
+  #right{left:16px; width:auto; top:auto; max-height:42%;}
+  #info{display:none;}
+  #measureOut{top:auto; bottom:calc(70px + env(safe-area-inset-bottom,0px)); white-space:normal; width:calc(100% - 32px);}
+}
+</style></head><body>
+<canvas id="stage"></canvas>
+
+<div id="ui">
+  <div class="top">
+    <button class="btn" id="hideBtn">Hide controls</button>
+    <button class="btn" id="openBtn">Open CSV…</button>
+    <input type="file" class="file" id="file" accept=".csv,text/csv">
+  </div>
+  <div id="uiBody">
+    <div class="grp">
+      <label for="dataSel">Dataset</label>
+      <select id="dataSel"></select>
+      <div class="hint">Or drop a CSV anywhere on the page. Needs x / y (position_x or "x 3d") and a cable-length column; z, index, ID labels and Panel are used if present.</div>
+    </div>
+    <div class="grp">
+      <button class="btn wide" id="orthoBtn">Orthographic view</button>
+      <div class="rowsel"><button class="btn" data-cam="iso">3D</button><button class="btn" data-cam="eye">Eye level</button><button class="btn" data-cam="front">Front</button></div>
+      <div class="rowsel"><button class="btn" data-cam="side">Side</button><button class="btn" data-cam="top">Plan</button><button class="btn" data-cam="below">Below</button></div>
+      <div class="hint">Plan = looking down at the canopy, like the L&amp;F "view from top". Below = looking up from the floor (mirrored).</div>
+      <label class="chk" style="margin-top:4px"><input type="checkbox" id="cOrient" checked>Orient like L&amp;F drawing (#A01 bottom-left in Plan)</label>
+      <div class="hint" id="orientHint"></div>
+      <label for="frontSel" style="margin-top:4px">Front view from</label>
+      <select id="frontSel"><option value="-y">#A/#C/#E side (bottom in Plan)</option><option value="+y">#B/#D/#F side (top in Plan)</option><option value="-x">Panel A end (left in Plan)</option><option value="+x">Panel C end (right in Plan)</option></select>
+    </div>
+    <div class="grp">
+      <label for="colorSel">Color by</label>
+      <select id="colorSel">
+        <option value="cable">Cable length</option>
+        <option value="bulbz">Bulb height (z − cable)</option>
+        <option value="index">Index</option>
+        <option value="group">ID group (A–F)</option>
+        <option value="panel">Panel / plate</option>
+        <option value="delta" disabled>Δ cable vs comparison</option>
+      </select>
+    </div>
+    <div class="grp">
+      <label for="findIn">Find bulb (ID or index)</label>
+      <div class="rowsel"><button class="btn" id="prevBtn" aria-label="Previous index">‹</button><input type="text" id="findIn" inputmode="numeric" placeholder="e.g. #A01 or 151"><button class="btn" id="nextBtn" aria-label="Next index">›</button></div>
+      <div class="hint">Selected bulb is magenta. Click any bulb to select it; Esc clears.</div>
+    </div>
+    <div class="grp">
+      <button class="btn wide" id="measureBtn">Measure between two bulbs</button>
+      <div class="hint">Click two bulbs: straight, plan (hole-to-hole) and vertical distance. Esc to stop.</div>
+    </div>
+    <div class="grp">
+      <label for="clearIn">Close-pair threshold (m)</label>
+      <input type="number" id="clearIn" step="0.005" min="0" value="0.10">
+      <label class="chk"><input type="checkbox" id="cClose" checked>Draw bulb pairs closer than this</label>
+      <div class="hint">Centre-to-centre distance between cable ends (tops of bulbs), in 3D. Closest pairs in this file are ~0.11 m; raise to 0.12 to see the tightest spots.</div>
+    </div>
+    <div class="grp">
+      <span class="lab">Show</span>
+      <label class="chk"><input type="checkbox" id="cCanopy" checked>Canopy 115 × 70 in (approx.)</label>
+      <label class="chk"><input type="checkbox" id="cHoles" checked>Mount holes</label>
+      <label class="chk"><input type="checkbox" id="cLabels">ID labels</label>
+      <label class="chk"><input type="checkbox" id="cGrid" checked>Floor grid</label>
+      <label class="chk"><input type="checkbox" id="cRuler" checked>Height ruler</label>
+      <label class="chk"><input type="checkbox" id="cPerson" checked>Person for scale (1.75 m)</label>
+      <label class="chk"><input type="checkbox" id="cAxes">CSV axis cross (at hole-pattern centre)</label>
+      <div class="hint">Canopy outline is drawn centred on the hole pattern, with section splits 38½ / 38 / 38½ in and 5 11/16 in depth (from the L&amp;F shop drawings). The CSV does not carry L&amp;F's datum, so treat it as a guide.</div>
+    </div>
+    <div class="grp">
+      <label for="floorIn">Floor at CSV z (m)</label>
+      <input type="number" id="floorIn" step="0.01" value="0">
+      <div class="hint" id="floorHint"></div>
+    </div>
+    <div class="grp">
+      <span class="lab">Compare</span>
+      <label for="cmpSel">Compare with</label>
+      <select id="cmpSel"></select>
+      <label for="cmpBy">Match bulbs by</label>
+      <select id="cmpBy"><option value="id">Same ID (where each labelled bulb moved)</option><option value="pos">Same room position (did the shape change?)</option></select>
+      <button class="btn wide" id="cmpBtn">Load comparison CSV…</button>
+      <input type="file" class="file" id="cmpFile" accept=".csv,text/csv">
+      <div class="hint" id="cmpHint">Pick an earlier revision, or load another CSV. Colour by "Δ cable vs comparison" to see the differences.</div>
+    </div>
+    <div class="grp">
+      <span class="lab">Display</span>
+      <label for="ptSize">Point size <span id="vPt">5.0</span></label>
+      <input type="range" id="ptSize" min="1" max="14" step="0.5" value="5">
+      <label for="dropOp">Drop line opacity <span id="vOp">0.45</span></label>
+      <input type="range" id="dropOp" min="0" max="1" step="0.05" value="0.45">
+    </div>
+  </div>
+</div>
+
+<div id="right"><div id="legend"></div><div id="rigStats"></div></div>
+<div id="info">Drag orbit · Scroll zoom · Right-drag pan · Hover bulb · Click = select<br>Data: <code id="dataName"></code></div>
+<div id="tooltip"></div>
+<div id="measureOut"></div>
+<div id="err" title="Click to dismiss"></div>
+<div id="drop">Drop CSV to load</div>
+
+<script type="text/plain" data-ds data-name="pulsechandelier_miami_nov25.csv" data-label="pulsechandelier_miami_nov25">index,ID,position_x,position_y,position_z,cablelength(M)
+292,#A01,-22.496,9.586,6.245,0.925
+283,#A02,-22.646,9.535,6.245,1.060
+291,#A03,-22.760,9.578,6.245,1.074
+296,#A04,-22.876,9.606,6.245,1.098
+298,#A05,-23.107,9.611,6.245,1.211
+293,#A06,-23.221,9.587,6.245,1.315
+282,#A07,-22.386,9.510,6.245,0.918
+271,#A08,-22.536,9.476,6.245,1.050
+264,#A09,-22.697,9.424,6.245,1.236
+269,#A10,-22.808,9.462,6.245,1.260
+276,#A11,-22.922,9.484,6.245,1.299
+277,#A12,-23.037,9.488,6.245,1.366
+270,#A13,-23.151,9.473,6.245,1.468
+261,#A14,-22.431,9.403,6.245,1.036
+254,#A15,-22.590,9.369,6.245,1.221
+244,#A16,-22.765,9.315,6.245,1.469
+248,#A17,-22.876,9.347,6.245,1.507
+252,#A18,-22.990,9.360,6.245,1.570
+250,#A19,-23.107,9.353,6.245,1.668
+245,#A20,-22.333,9.316,6.245,1.009
+241,#A21,-22.489,9.300,6.245,1.203
+236,#A22,-22.659,9.266,6.245,1.443
+226,#A23,-22.394,9.217,6.245,1.175
+222,#A24,-22.560,9.202,6.245,1.420
+218,#A25,-22.747,9.168,6.245,1.701
+224,#A26,-22.854,9.209,6.245,1.737
+229,#A27,-22.968,9.231,6.245,1.795
+230,#A28,-23.087,9.232,6.245,1.877
+209,#A29,-22.467,9.124,6.245,1.391
+206,#A30,-22.647,9.110,6.245,1.671
+200,#A31,-22.856,9.075,6.245,1.959
+202,#A32,-22.970,9.106,6.245,2.004
+207,#A33,-23.094,9.114,6.245,2.065
+192,#A34,-22.384,9.032,6.245,1.360
+193,#A35,-22.555,9.037,6.245,1.643
+189,#A36,-22.752,9.025,6.245,1.926
+183,#A37,-22.996,8.988,6.245,2.167
+186,#A38,-23.126,9.003,6.245,2.204
+177,#A39,-22.473,8.951,6.245,1.614
+180,#A40,-22.658,8.959,6.245,1.898
+176,#A41,-22.882,8.949,6.245,2.143
+159,#A42,-22.400,8.852,6.245,1.580
+162,#A43,-22.575,8.879,6.245,1.870
+167,#A44,-22.781,8.891,6.245,2.121
+164,#A45,-23.046,8.882,6.245,2.272
+169,#A46,-23.187,8.905,6.245,2.296
+152,#A47,-22.692,8.817,6.245,2.093
+155,#A48,-22.929,8.834,6.245,2.263
+148,#A49,-23.118,8.793,6.245,2.332
+8,#B01,-22.339,8.050,6.245,1.518
+5,#B02,-22.452,8.026,6.245,1.694
+0,#B03,-22.569,8.014,6.245,1.837
+3,#B04,-22.687,8.016,6.245,1.948
+6,#B05,-22.810,8.034,6.245,2.045
+11,#B06,-22.935,8.069,6.245,2.131
+20,#B07,-23.064,8.126,6.245,2.214
+16,#B08,-23.191,8.091,6.245,2.261
+33,#B09,-22.331,8.186,6.245,1.541
+29,#B10,-22.444,8.156,6.245,1.736
+26,#B11,-22.560,8.140,6.245,1.890
+24,#B12,-22.682,8.137,6.245,2.008
+28,#B13,-22.808,8.151,6.245,2.106
+32,#B14,-22.940,8.184,6.245,2.189
+44,#B15,-23.080,8.241,6.245,2.264
+36,#B16,-23.199,8.210,6.245,2.297
+57,#B17,-22.338,8.318,6.245,1.583
+53,#B18,-22.450,8.284,6.245,1.792
+48,#B19,-22.568,8.262,6.245,1.959
+47,#B20,-22.692,8.255,6.245,2.080
+49,#B21,-22.824,8.265,6.245,2.174
+55,#B22,-22.965,8.297,6.245,2.249
+65,#B23,-23.120,8.356,6.245,2.313
+80,#B24,-22.359,8.446,6.245,1.643
+77,#B25,-22.471,8.406,6.245,1.862
+71,#B26,-22.590,8.380,6.245,2.033
+68,#B27,-22.718,8.368,6.245,2.153
+69,#B28,-22.857,8.375,6.245,2.239
+76,#B29,-23.011,8.405,6.245,2.302
+85,#B30,-23.189,8.469,6.245,2.358
+100,#B31,-22.394,8.568,6.245,1.714
+99,#B32,-22.506,8.523,6.245,1.935
+92,#B33,-22.628,8.491,6.245,2.105
+86,#B34,-22.761,8.475,6.245,2.220
+88,#B35,-22.910,8.479,6.245,2.295
+97,#B36,-23.081,8.508,6.245,2.342
+139,#B37,-22.339,8.743,6.245,1.532
+126,#B38,-22.442,8.681,6.245,1.784
+118,#B39,-22.555,8.631,6.245,2.006
+111,#B40,-22.680,8.595,6.245,2.169
+104,#B41,-22.821,8.574,6.245,2.276
+102,#B42,-22.983,8.573,6.245,2.333
+114,#B43,-23.183,8.604,6.245,2.374
+146,#B44,-22.502,8.786,6.245,1.834
+135,#B45,-22.617,8.730,6.245,2.059
+127,#B46,-22.748,8.688,6.245,2.219
+122,#B47,-22.898,8.661,6.245,2.310
+121,#B48,-23.081,8.657,6.245,2.354
+142,#B49,-22.830,8.768,6.245,2.248
+136,#B50,-22.996,8.736,6.245,2.324
+286,#C01,-23.327,9.543,6.245,1.463
+290,#C02,-23.507,9.569,6.245,1.546
+288,#C03,-23.681,9.554,6.245,1.706
+297,#C04,-23.790,9.611,6.245,1.661
+266,#C05,-23.264,9.436,6.245,1.616
+272,#C06,-23.428,9.477,6.245,1.660
+273,#C07,-23.589,9.478,6.245,1.789
+267,#C08,-23.737,9.440,6.245,1.980
+280,#C09,-23.838,9.500,6.245,1.934
+284,#C10,-23.953,9.537,6.245,1.931
+287,#C11,-24.077,9.551,6.245,1.957
+246,#C12,-23.225,9.322,6.245,1.805
+257,#C13,-23.372,9.374,6.245,1.809
+259,#C14,-23.520,9.385,6.245,1.904
+251,#C15,-23.656,9.359,6.245,2.065
+240,#C16,-23.772,9.300,6.245,2.256
+255,#C17,-23.864,9.371,6.245,2.201
+262,#C18,-23.971,9.414,6.245,2.191
+265,#C19,-24.087,9.431,6.245,2.220
+223,#C20,-23.221,9.207,6.245,1.997
+235,#C21,-23.344,9.262,6.245,1.983
+239,#C22,-23.477,9.279,6.245,2.047
+233,#C23,-23.600,9.256,6.245,2.186
+221,#C24,-23.703,9.199,6.245,2.354
+225,#C25,-23.859,9.214,6.245,2.446
+237,#C26,-23.961,9.275,6.245,2.422
+243,#C27,-24.072,9.304,6.245,2.436
+201,#C28,-23.230,9.093,6.245,2.153
+213,#C29,-23.347,9.146,6.245,2.148
+215,#C30,-23.467,9.159,6.245,2.209
+210,#C31,-23.578,9.128,6.245,2.340
+205,#C32,-23.773,9.108,6.245,2.520
+204,#C33,-23.907,9.108,6.245,2.606
+217,#C34,-24.021,9.164,6.245,2.604
+219,#C35,-24.137,9.178,6.245,2.637
+182,#C36,-23.280,8.986,6.245,2.273
+190,#C37,-23.389,9.028,6.245,2.293
+188,#C38,-23.504,9.023,6.245,2.380
+198,#C39,-23.667,9.050,6.245,2.498
+181,#C40,-23.793,8.983,6.245,2.650
+184,#C41,-23.907,8.992,6.245,2.714
+195,#C42,-24.042,9.046,6.245,2.737
+197,#C43,-24.163,9.049,6.245,2.791
+154,#C44,-23.279,8.826,6.245,2.363
+166,#C45,-23.374,8.891,6.245,2.377
+170,#C46,-23.495,8.906,6.245,2.455
+175,#C47,-23.617,8.948,6.245,2.538
+165,#C48,-23.709,8.884,6.245,2.651
+160,#C49,-23.830,8.869,6.245,2.744
+173,#C50,-24.018,8.934,6.245,2.840
+171,#C51,-24.150,8.925,6.245,2.940
+134,#C52,-23.221,8.726,6.245,2.373
+2,#D01,-23.585,8.016,6.245,2.661
+12,#D02,-23.690,8.074,6.245,2.843
+7,#D03,-23.851,8.047,6.245,3.061
+9,#D04,-24.023,8.061,6.245,3.186
+13,#D05,-23.316,8.081,6.245,2.339
+17,#D06,-23.437,8.096,6.245,2.450
+23,#D07,-23.547,8.136,6.245,2.607
+34,#D08,-23.643,8.199,6.245,2.766
+27,#D09,-23.777,8.151,6.245,2.979
+25,#D10,-23.926,8.139,6.245,3.157
+30,#D11,-24.083,8.166,6.245,3.250
+35,#D12,-23.318,8.205,6.245,2.358
+40,#D13,-23.432,8.227,6.245,2.451
+51,#D14,-23.535,8.277,6.245,2.589
+54,#D15,-23.719,8.287,6.245,2.872
+46,#D16,-23.840,8.247,6.245,3.065
+45,#D17,-23.976,8.243,6.245,3.214
+50,#D18,-24.117,8.277,6.245,3.299
+58,#D19,-23.235,8.332,6.245,2.343
+60,#D20,-23.349,8.338,6.245,2.400
+70,#D21,-23.460,8.377,6.245,2.491
+67,#D22,-23.623,8.360,6.245,2.712
+75,#D23,-23.766,8.404,6.245,2.910
+66,#D24,-23.874,8.360,6.245,3.091
+64,#D25,-23.997,8.356,6.245,3.231
+73,#D26,-24.123,8.392,6.245,3.317
+82,#D27,-23.305,8.460,6.245,2.396
+91,#D28,-23.425,8.489,6.245,2.471
+81,#D29,-23.563,8.458,6.245,2.615
+90,#D30,-23.687,8.488,6.245,2.764
+94,#D31,-23.868,8.495,6.245,3.022
+87,#D32,-23.981,8.478,6.245,3.177
+96,#D33,-24.096,8.506,6.245,3.271
+109,#D34,-23.300,8.581,6.245,2.409
+113,#D35,-23.436,8.603,6.245,2.489
+106,#D36,-23.553,8.577,6.245,2.594
+117,#D37,-23.657,8.625,6.245,2.692
+101,#D38,-23.769,8.570,6.245,2.838
+115,#D39,-23.911,8.610,6.245,3.007
+116,#D40,-24.028,8.615,6.245,3.140
+123,#D41,-24.130,8.669,6.245,3.185
+128,#D42,-23.337,8.691,6.245,2.422
+130,#D43,-23.510,8.708,6.245,2.544
+138,#D44,-23.650,8.740,6.245,2.658
+129,#D45,-23.773,8.693,6.245,2.778
+133,#D46,-23.883,8.720,6.245,2.887
+140,#D47,-24.012,8.745,6.245,3.010
+145,#D48,-23.418,8.775,6.245,2.451
+151,#D49,-23.565,8.811,6.245,2.564
+147,#D50,-23.764,8.790,6.245,2.730
+157,#D51,-23.942,8.840,6.245,2.862
+153,#D52,-24.099,8.820,6.245,3.022
+285,#E01,-24.207,9.540,6.245,2.015
+281,#E02,-24.338,9.506,6.245,2.110
+289,#E03,-24.463,9.562,6.245,1.968
+295,#E04,-24.585,9.599,6.245,1.864
+299,#E05,-24.939,9.614,6.245,1.929
+294,#E06,-25.053,9.593,6.245,1.998
+263,#E07,-24.209,9.423,6.245,2.278
+260,#E08,-24.332,9.390,6.245,2.370
+268,#E09,-24.466,9.447,6.245,2.245
+274,#E10,-24.595,9.481,6.245,2.139
+278,#E11,-24.719,9.496,6.245,2.077
+279,#E12,-24.839,9.496,6.245,2.076
+275,#E13,-24.955,9.482,6.245,2.109
+242,#E14,-24.188,9.303,6.245,2.487
+238,#E15,-24.304,9.275,6.245,2.563
+247,#E16,-24.451,9.333,6.245,2.483
+253,#E17,-24.588,9.365,6.245,2.398
+258,#E18,-24.716,9.377,6.245,2.332
+256,#E19,-24.839,9.372,6.245,2.289
+249,#E20,-24.956,9.353,6.245,2.275
+216,#E21,-24.251,9.161,6.245,2.692
+227,#E22,-24.416,9.222,6.245,2.648
+231,#E23,-24.563,9.252,6.245,2.595
+234,#E24,-24.698,9.261,6.245,2.542
+232,#E25,-24.824,9.252,6.245,2.496
+228,#E26,-24.943,9.228,6.245,2.457
+220,#E27,-25.055,9.191,6.245,2.423
+187,#E28,-24.274,9.017,6.245,2.872
+208,#E29,-24.359,9.116,6.245,2.762
+212,#E30,-24.520,9.145,6.245,2.723
+214,#E31,-24.664,9.151,6.245,2.682
+211,#E32,-24.794,9.137,6.245,2.641
+203,#E33,-24.915,9.108,6.245,2.598
+199,#E34,-25.027,9.066,6.245,2.556
+194,#E35,-24.458,9.046,6.245,2.844
+196,#E36,-24.612,9.048,6.245,2.791
+191,#E37,-24.749,9.029,6.245,2.746
+185,#E38,-24.873,8.995,6.245,2.706
+174,#E39,-24.985,8.948,6.245,2.664
+163,#E40,-24.259,8.880,6.245,3.045
+179,#E41,-24.373,8.957,6.245,2.967
+178,#E42,-24.544,8.954,6.245,2.927
+172,#E43,-24.689,8.931,6.245,2.863
+168,#E44,-24.817,8.892,6.245,2.799
+156,#E45,-24.931,8.839,6.245,2.749
+144,#E46,-25.033,8.775,6.245,2.704
+141,#E47,-24.209,8.761,6.245,3.153
+150,#E48,-24.348,8.807,6.245,3.147
+161,#E49,-24.457,8.873,6.245,3.059
+1,#F01,-24.699,8.015,6.245,2.923
+10,#F02,-24.811,8.066,6.245,2.868
+4,#F03,-24.961,8.024,6.245,2.784
+19,#F04,-24.194,8.117,6.245,3.234
+15,#F05,-24.307,8.091,6.245,3.189
+14,#F06,-24.422,8.085,6.245,3.126
+18,#F07,-24.536,8.098,6.245,3.057
+21,#F08,-24.649,8.128,6.245,2.999
+31,#F09,-24.759,8.175,6.245,2.932
+22,#F10,-24.919,8.132,6.245,2.809
+37,#F11,-25.021,8.212,6.245,2.745
+41,#F12,-24.236,8.233,6.245,3.299
+38,#F13,-24.353,8.214,6.245,3.255
+39,#F14,-24.468,8.218,6.245,3.189
+43,#F15,-24.581,8.240,6.245,3.113
+52,#F16,-24.689,8.281,6.245,3.040
+42,#F17,-24.863,8.237,6.245,2.858
+56,#F18,-24.961,8.313,6.245,2.785
+63,#F19,-24.252,8.351,6.245,3.346
+61,#F20,-24.374,8.339,6.245,3.312
+62,#F21,-24.491,8.351,6.245,3.245
+72,#F22,-24.602,8.383,6.245,3.167
+79,#F23,-24.705,8.432,6.245,3.072
+59,#F24,-24.793,8.337,6.245,2.950
+78,#F25,-24.889,8.409,6.245,2.857
+74,#F26,-25.052,8.403,6.245,2.724
+84,#F27,-24.242,8.466,6.245,3.353
+83,#F28,-24.371,8.461,6.245,3.340
+89,#F29,-24.489,8.480,6.245,3.282
+98,#F30,-24.598,8.521,6.245,3.196
+108,#F31,-24.697,8.579,6.245,3.085
+95,#F32,-24.801,8.498,6.245,2.964
+93,#F33,-24.977,8.494,6.245,2.777
+103,#F34,-24.202,8.574,6.245,3.299
+105,#F35,-24.342,8.575,6.245,3.322
+112,#F36,-24.464,8.603,6.245,3.284
+119,#F37,-24.572,8.652,6.245,3.189
+132,#F38,-24.666,8.718,6.245,3.062
+120,#F39,-24.786,8.653,6.245,2.962
+107,#F40,-24.889,8.578,6.245,2.860
+110,#F41,-25.056,8.592,6.245,2.720
+125,#F42,-24.289,8.677,6.245,3.257
+131,#F43,-24.417,8.713,6.245,3.235
+143,#F44,-24.524,8.770,6.245,3.138
+158,#F45,-24.615,8.844,6.245,3.003
+149,#F46,-24.748,8.799,6.245,2.924
+137,#F47,-24.864,8.740,6.245,2.843
+124,#F48,-24.966,8.671,6.245,2.774</script>
+<script>
+"use strict";
+{
+/* Model: position_x/y/z = mount point on the canopy (Z up, metres).
+   Bulb (top of bulb / cable end) = (x, y, z − cable). */
+const IN=0.0254, CANOPY={L:115*IN, W:70*IN, D:(5+11/16)*IN, sec:[38.5*IN,38*IN,38.5*IN]}, MIN_CABLE=18*IN;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+const f3=v=>v.toFixed(3), f2=v=>v.toFixed(2);
+function frac(inches){ // to nearest 1/16"
+  const s=inches<0?"-":"", t=Math.round(Math.abs(inches)*16); let w=Math.floor(t/16), n=t%16, d=16;
+  while(n && n%2===0){n/=2; d/=2;} return s+(w||!n? w:"")+(n? (w?" ":"")+n+"/"+d : "")+"\"";
+}
+const inch=m=>frac(m/IN);
+const nm=b=>b.lab? (R.col.id>=0? `${b.lab} (index ${b.id})` : b.lab) : `#${b.id}`;
+const sh=b=>b.lab||("#"+b.id);
+const ftin=m=>{ const t=Math.round(m/IN*16)/16, ft=Math.floor(t/12); return `${ft}' ${frac(t-ft*12)}`; };
+
+/* ---------- CSV ---------- */
+function splitLine(l){ return l.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(s=>s.trim().replace(/^"|"$/g,"")); }
+function findCol(head,pats){ for(const p of pats){ const i=head.findIndex(h=>p.test(h)); if(i>=0) return i; } return -1; }
+function parse(text,name){
+  const lines=text.replace(/^﻿/,"").split(/\r?\n/).filter(l=>l.trim()!=="");
+  if(lines.length<2) throw new Error(`"${name}" has no data rows.`);
+  const head=splitLine(lines[0]);
+  const col={ x:findCol(head,[/^position_x$/i,/^x$/i,/^x ?3d$/i,/^xdim/i]), y:findCol(head,[/^position_y$/i,/^y$/i,/^y ?3d$/i,/^ydim/i]), z:findCol(head,[/^position_z$/i,/^z$/i,/^z ?3d$/i]),
+    cable:findCol(head,[/^hangheight/i,/^cablelength/i,/^bulbcablelength/i,/hang/i,/cable/i,/^drop/i,/length/i,/^to ?ceiling$/i]), id:findCol(head,[/^index$/i,/^#$/]),
+    lab:findCol(head,[/^labels?$/i,/^lf_?id$/i,/^new_?id$/i,/^id$/i]), panel:findCol(head,[/^panel$/i,/^plate$/i]) };
+  // a purely numeric "ID" column is an index, not a label
+  if(col.lab>=0 && /^id$/i.test(head[col.lab]) && lines.slice(1).every(l=>/^-?\d+(\.\d+)?$/.test(splitLine(l)[col.lab]||""))){ if(col.id<0) col.id=col.lab; col.lab=-1; }
+  const noZ=col.z<0;
+  const unit = /(_in|\(in\)|inch)/i.test(head[col.x]||"") ? 0.0254 : 1; // L&F XDIM/YDIM are inches
+  const miss=["x","y","cable"].filter(k=>col[k]<0);
+  if(miss.length) throw new Error(`"${name}" is missing column(s): ${miss.join(", ")}.\nHeader found: ${head.join(", ")}`);
+  const bulbs=[], bad=[], skipped=[];
+  for(let r=1;r<lines.length;r++){
+    const c=splitLine(lines[r]), n=i=>i<0?NaN:Number(c[i]);
+    const b={raw:c, row:r, x:n(col.x)*unit, y:n(col.y)*unit, z: noZ? 0 : n(col.z)*unit, cable:n(col.cable), id: col.id>=0? n(col.id) : r-1, lab: col.lab>=0? c[col.lab] : "", panel: col.panel>=0? c[col.panel] : ""};
+    if(/^sensor/i.test(b.lab)||/^sensor/i.test(b.panel)){ skipped.push(b.lab||b.panel); continue; }
+    if([b.x,b.y,b.z,b.cable,b.id].some(v=>!Number.isFinite(v))){ bad.push(r+1); continue; }
+    b.bz=b.z-b.cable; b.rx=b.x; b.ry=b.y; bulbs.push(b);
+  }
+  if(!bulbs.length) throw new Error(`"${name}": no rows with numeric position and cable values.`);
+  const byId=new Map(); for(const b of bulbs) if(!byId.has(b.id)) byId.set(b.id,b);
+  const byLab=new Map(); for(const b of bulbs) if(b.lab) byLab.set(b.lab.replace(/^#/,"").toUpperCase(),b);
+  return {name, head, col, bulbs, byId, byLab, bad, skipped, noZ, unit};
+}
+
+/* ---------- canopy orientation ----------
+   Rotate the drawing (not the data) so it reads like L&F's "view from top":
+   #A01 bottom-left, #B01 above it, #E05 bottom-right. Snaps to 90 degree steps. */
+function detectOrient(Rg){
+  const g=k=>Rg.byLab.get(k);
+  const a=g("A01"), e=g("E05"), b=g("B01");
+  Rg.orient={rot:0, ok:false, mirrored:false};
+  if(!a||!e) return;
+  const ang=Math.atan2(e.ry-a.ry, e.rx-a.rx), k=Math.round(ang/(Math.PI/2));
+  Rg.orient.rot=-k*Math.PI/2; Rg.orient.ok=true;
+  if(b){ const c=Math.cos(Rg.orient.rot), s=Math.sin(Rg.orient.rot); const yb=s*b.rx+c*b.ry, ya=s*a.rx+c*a.ry; Rg.orient.mirrored = yb<ya; }
+}
+function applyOrient(Rg){
+  if(!Rg) return;
+  const xs=Rg.bulbs.map(b=>b.rx), ys=Rg.bulbs.map(b=>b.ry);
+  const cx=(Math.min(...xs)+Math.max(...xs))/2, cy=(Math.min(...ys)+Math.max(...ys))/2;
+  const r= S.orientCanopy && Rg.orient.ok ? Rg.orient.rot : 0, c=Math.cos(r), s=Math.sin(r);
+  for(const b of Rg.bulbs){ const dx=b.rx-cx, dy=b.ry-cy; b.x=cx+c*dx-s*dy; b.y=cy+s*dx+c*dy; }
+  Rg.rotApplied=r;
+}
+const degs=r=>Math.round(((r*180/Math.PI)%360+360)%360);
+
+/* ---------- state ---------- */
+let R=null, C=null, X={}, proj=[];
+const S={orientCanopy:true, cmpBy:"id", ortho:false, plan:false, colorBy:"cable", cur:null, hover:null, pt:5, op:0.45, floorZ:0, thr:0.10, front:[0,-1],
+  show:{canopy:true, holes:true, labels:false, grid:true, ruler:true, person:true, axes:false, close:true},
+  theta:0.6, phi:0.3, dist:10, ppm:120, target:[0,0,0], measuring:false, mA:null, mB:null};
+
+function analyse(){
+  const B=R.bulbs, ext=f=>{let lo=Infinity,hi=-Infinity; for(const b of B){const v=f(b); if(v<lo)lo=v; if(v>hi)hi=v;} return [lo,hi];};
+  [X.minX,X.maxX]=ext(b=>b.x); [X.minY,X.maxY]=ext(b=>b.y); [X.minZ,X.maxZ]=ext(b=>b.z);
+  [X.minC,X.maxC]=ext(b=>b.cable); [X.minBZ,X.maxBZ]=ext(b=>b.bz); [X.minId,X.maxId]=ext(b=>b.id);
+  X.panels=[...new Set(R.bulbs.map(b=>b.panel).filter(Boolean))].sort();
+  X.cx=(X.minX+X.maxX)/2; X.cy=(X.minY+X.maxY)/2;
+  X.longX=(X.maxX-X.minX)>=(X.maxY-X.minY);
+  X.total=B.reduce((s,b)=>s+b.cable,0); X.mean=X.total/B.length;
+  X.dupIds=B.length-R.byId.size;
+  const ids=new Set(B.map(b=>b.id)); X.missingIds=[]; for(let i=X.minId;i<=X.maxId && X.missingIds.length<50;i++) if(!ids.has(i)) X.missingIds.push(i);
+  X.short=B.filter(b=>b.cable<MIN_CABLE);
+  X.flat=X.maxZ-X.minZ<1e-6;
+  // pairwise
+  let minHole={d:Infinity}; const dupPos=[]; X.nearest=new Map();
+  for(const b of B) X.nearest.set(b,{d:Infinity,o:null});
+  const pairs=[];
+  for(let i=0;i<B.length;i++) for(let j=i+1;j<B.length;j++){
+    const a=B[i], b=B[j], dp=Math.hypot(a.x-b.x,a.y-b.y), d3=Math.hypot(dp,a.bz-b.bz);
+    if(dp<minHole.d) minHole={d:dp,a,b};
+    if(dp<1e-4) dupPos.push([a,b]);
+    if(d3<X.nearest.get(a).d) X.nearest.set(a,{d:d3,o:b});
+    if(d3<X.nearest.get(b).d) X.nearest.set(b,{d:d3,o:a});
+    pairs.push({a,b,d:d3});
+  }
+  pairs.sort((p,q)=>p.d-q.d); X.pairs=pairs.slice(0,400); X.minHole=minHole; X.dupPos=dupPos;
+  X.lowest=B.reduce((m,b)=>b.bz<m.bz?b:m,B[0]);
+  // canopy margins (canopy centred on hole bbox)
+  const L=X.longX?X.maxX-X.minX:X.maxY-X.minY, Wd=X.longX?X.maxY-X.minY:X.maxX-X.minX;
+  X.marg={long:(CANOPY.L-L)/2, short:(CANOPY.W-Wd)/2, L, Wd};
+  analyseCmp();
+}
+function closePairs(){ return X.pairs.filter(p=>p.d<S.thr); }
+function analyseCmp(){
+  X.cmp=null; if(!C) return;
+  const byLab = R.col.lab>=0 && C.col.lab>=0;
+  let n=0, changed=0, moved=0, maxD={v:0}, maxM={v:0}; const onlyA=[], onlyB=[];
+  const key=b=> byLab? b.lab.replace(/^#/,"").toUpperCase() : b.id;
+  const cmap=new Map(C.bulbs.map(o=>[key(o),o]));
+  for(const b of R.bulbs){
+    let o=null;
+    if(S.cmpBy==="pos"){ // comparison's cable at this hole's room position (inverse-distance, 4 nearest)
+      const nn=C.bulbs.map(q=>({q,d:Math.hypot(q.x-b.x,q.y-b.y)})).sort((u,v)=>u.d-v.d).slice(0,4);
+      let sw=0,sc=0; for(const {q,d} of nn){ const w=1/Math.max(d,1e-4); sw+=w; sc+=w*q.cable; }
+      const cab=sc/sw; o={x:b.x,y:b.y,z:b.z,cable:cab,bz:b.z-cab,lab:"",near:nn[0].q,nearD:nn[0].d};
+    } else o=cmap.get(key(b))||null;
+    b.o=o; if(!o){ onlyA.push(sh(b)); continue; } n++;
+    b.dc=b.cable-o.cable; b.dm=Math.hypot(b.x-o.x,b.y-o.y,b.z-o.z);
+    if(Math.abs(b.dc)>0.0005) changed++; if(b.dm>0.0005) moved++;
+    if(Math.abs(b.dc)>Math.abs(maxD.v)) maxD={v:b.dc,b}; if(b.dm>maxM.v) maxM={v:b.dm,b}; }
+  if(S.cmpBy!=="pos"){ const mine=new Set(R.bulbs.map(key)); for(const o of C.bulbs) if(!mine.has(key(o))) onlyB.push(sh(o)); }
+  const ds=R.bulbs.filter(b=>b.o).map(b=>Math.abs(b.dc));
+  X.cmp={n,changed,moved,maxD,maxM,onlyA,onlyB,byLab,total:C.bulbs.reduce((s,b)=>s+b.cable,0),
+    meanAbs: ds.reduce((s,v)=>s+v,0)/Math.max(1,ds.length)};
+  X.maxAbsD=Math.max(0.001,...ds);
+}
+
+/* ---------- colour ---------- */
+const hsl=(h,s,l)=>`hsl(${(h*360).toFixed(1)},${(s*100).toFixed(0)}%,${(l*100).toFixed(0)}%)`;
+function ramp(u){ u=Math.max(0,Math.min(1,u)); return hsl(0.36-u*0.36,0.95,0.55); } // green short → red long
+function rampZ(u){ u=Math.max(0,Math.min(1,u)); return hsl(0.55+u*0.25,1,0.55+u*0.1); }
+function colorOf(b){
+  const t=(v,lo,hi)=>(v-lo)/((hi-lo)||1);
+  switch(S.colorBy){
+    case "bulbz": return rampZ(t(b.bz,X.minBZ,X.maxBZ));
+    case "index": return hsl(t(b.id,X.minId,X.maxId)*0.85,0.9,0.6);
+    case "panel": { const i=X.panels.indexOf(b.panel); return i<0?"#777":hsl((0.08+i*0.381966)%1,0.85,0.6); }
+    case "group": { const g=labKey(b)[0]; const i="ABCDEF".indexOf(g); return i<0?"#777":hsl((0.08+i*0.381966)%1,0.85,0.6); }
+    case "delta": { if(!b.o) return "#555"; const u=b.dc/X.maxAbsD; if(Math.abs(b.dc)<=0.0005) return "#8a8a95";
+      return u>0? hsl(0.0,0.9,0.75-0.25*Math.abs(u)) : hsl(0.58,0.9,0.75-0.25*Math.abs(u)); }
+    default: return ramp(t(b.cable,X.minC,X.maxC));
+  }
+}
+
+/* ---------- camera / projection ---------- */
+const cvs=$("stage"), ctx=cvs.getContext("2d");
+let W=0,H=0,DPR=1,cam=null; const FOV=45*Math.PI/180;
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const norm=a=>{const l=Math.hypot(...a)||1; return [a[0]/l,a[1]/l,a[2]/l];};
+const E=(x,y,z)=>[x,z,-y];
+function camera(){
+  const cp=Math.cos(S.phi), dir=[cp*Math.sin(S.theta),Math.sin(S.phi),cp*Math.cos(S.theta)];
+  const eye=[S.target[0]+dir[0]*S.dist,S.target[1]+dir[1]*S.dist,S.target[2]+dir[2]*S.dist];
+  const fwd=norm(sub(S.target,eye)); let right=norm(cross(fwd,[0,1,0])); if(!isFinite(right[0])) right=[1,0,0];
+  return {eye,fwd,right,up:cross(right,fwd),focal:(H/2)/Math.tan(FOV/2)};
+}
+function P(x,y,z){
+  const r=sub(E(x,y,z),cam.eye), px=dot(r,cam.right), py=dot(r,cam.up), pz=dot(r,cam.fwd);
+  if(S.ortho) return {x:W/2+px*S.ppm,y:H/2-py*S.ppm,d:pz,ok:true,s:S.ppm};
+  if(pz<0.05) return {x:0,y:0,d:pz,ok:false,s:0};
+  const s=cam.focal/pz; return {x:W/2+px*s,y:H/2-py*s,d:pz,ok:true,s};
+}
+function lookFrom(eye,tgt){
+  const e=E(...eye), t=E(...tgt), d=sub(e,t), L=Math.hypot(...d)||1;
+  S.target=t; S.dist=L; S.phi=Math.asin(Math.max(-1,Math.min(1,d[1]/L))); S.theta=Math.atan2(d[0],d[2]);
+}
+function setOrtho(on){ S.ortho=on; $("orthoBtn").textContent=on?"Perspective view":"Orthographic view"; $("orthoBtn").classList.toggle("on",on); }
+function preset(n){
+  const f=S.front, lf=[f[1],-f[0]]; // viewer's left when facing the piece from f
+  const cx=X.cx, cy=X.cy, F=S.floorZ, T=X.maxZ+CANOPY.D, Hh=T-F, mid=[cx,cy,(X.minBZ+T)/2];
+  const span=Math.max(X.maxX-X.minX,X.maxY-X.minY,T-X.minBZ,1), t=2*Math.tan(FOV/2), aspect=Math.max(0.35,W/Math.max(1,H));
+  const D=Math.max(span/t,span/(t*aspect))*1.25+1;
+  if(n!=="top"&&n!=="below"&&S.plan){ S.plan=false; setOrtho(S.orthoBefore); }
+  if((n==="top"||n==="below")){ if(!S.plan){ S.plan=true; S.orthoBefore=S.ortho; } setOrtho(true); }
+  if(n==="iso")   lookFrom([cx+f[0]*D*0.9+lf[0]*D*0.5, cy+f[1]*D*0.9+lf[1]*D*0.5, mid[2]+D*0.35], mid);
+  if(n==="eye")   lookFrom([cx+f[0]*Math.max(5,D), cy+f[1]*Math.max(5,D), F+1.6], [cx,cy,(X.minBZ+T)/2]);
+  if(n==="front") lookFrom([cx+f[0]*D, cy+f[1]*D, mid[2]], mid);
+  if(n==="side")  lookFrom([cx-lf[0]*D, cy-lf[1]*D, mid[2]], mid);
+  if(n==="top"){  lookFrom([cx, cy-0.001, T+D], [cx,cy,X.maxZ]); S.phi=Math.PI/2-0.0005; S.theta=0; }
+  if(n==="below"){ lookFrom([cx, cy-0.001, X.minBZ-D], [cx,cy,X.maxZ]); S.phi=-(Math.PI/2-0.0005); S.theta=0; }
+  const plan=n==="top"||n==="below";
+  S.ppm = plan? Math.min(W,H)*0.78/Math.max(CANOPY.L,CANOPY.W) : Math.min(W,H)*0.72/span;
+  draw();
+}
+
+/* ---------- draw ---------- */
+const seg=(a,b)=>{ if(a.ok&&b.ok){ ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);} };
+function label3D(x,y,z,text,color,border){
+  const p=P(x,y,z); if(!p.ok) return;
+  ctx.font="11px Courier New, monospace"; const w=ctx.measureText(text).width+12;
+  ctx.fillStyle="rgba(0,0,0,0.78)"; ctx.fillRect(p.x-w/2,p.y-9,w,18);
+  if(border){ ctx.strokeStyle=border; ctx.lineWidth=1; ctx.strokeRect(p.x-w/2+0.5,p.y-8.5,w-1,17); }
+  ctx.fillStyle=color; ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillText(text,p.x,p.y); ctx.textAlign="start"; ctx.textBaseline="alphabetic";
+}
+function canopyRect(){ // [x0,x1,y0,y1]
+  const hl=(X.longX?CANOPY.L:CANOPY.W)/2, hw=(X.longX?CANOPY.W:CANOPY.L)/2;
+  return [X.cx-hl,X.cx+hl,X.cy-hw,X.cy+hw];
+}
+function poly(pts,close){ const pp=pts.map(v=>P(...v)); if(!pp.every(p=>p.ok)) return false; ctx.moveTo(pp[0].x,pp[0].y); for(const p of pp.slice(1)) ctx.lineTo(p.x,p.y); if(close) ctx.closePath(); return true; }
+function draw(){
+  if(!R) return;
+  cam=camera(); ctx.setTransform(DPR,0,0,DPR,0,0); ctx.fillStyle="#0a0a0f"; ctx.fillRect(0,0,W,H);
+  const fz=S.floorZ, Z=X.maxZ;
+  // floor grid
+  if(S.show.grid){
+    const g0x=Math.floor(X.cx-3), g1x=Math.ceil(X.cx+3), g0y=Math.floor(X.cy-3), g1y=Math.ceil(X.cy+3);
+    for(const major of [false,true]){ ctx.beginPath();
+      for(let v=g0x; v<=g1x+1e-9; v+=0.5){ if(major!==(Math.abs(v-Math.round(v))<1e-9)) continue; seg(P(v,g0y,fz),P(v,g1y,fz)); }
+      for(let v=g0y; v<=g1y+1e-9; v+=0.5){ if(major!==(Math.abs(v-Math.round(v))<1e-9)) continue; seg(P(g0x,v,fz),P(g1x,v,fz)); }
+      ctx.strokeStyle=major?"#20202c":"#15151d"; ctx.lineWidth=1; ctx.stroke(); }
+  }
+  // height ruler
+  if(S.show.ruler && !S.plan){
+    const [x0,,y0]=canopyRect(), rx=x0-0.3, ry=y0;
+    ctx.beginPath(); seg(P(rx,ry,fz),P(rx,ry,Z)); ctx.strokeStyle="#445566"; ctx.lineWidth=1; ctx.stroke();
+    const top=Z-fz, step=top>4?1:0.5; ctx.font="10px Courier New, monospace"; ctx.fillStyle="#557";
+    for(let h=0; h<=top+1e-6; h+=step){ const a=P(rx,ry,fz+h), b=P(rx-0.08,ry,fz+h); if(!a.ok||!b.ok) continue; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.fillText(h.toFixed(1),b.x-26,b.y+3); }
+    const m=P(rx,ry,Z); if(m.ok){ ctx.fillStyle="#7788aa"; ctx.fillText("holes "+f2(top)+" m",m.x+6,m.y-6); }
+    const lb=P(rx,ry,X.minBZ); if(lb.ok){ ctx.fillStyle="#7a7"; ctx.fillText("lowest bulb "+f2(X.minBZ-fz)+" m",lb.x+6,lb.y+3); }
+  }
+  // person for scale
+  if(S.show.person && !S.plan){
+    const f=S.front, [x0,x1,y0,y1]=canopyRect();
+    const px = f[1]? x1+0.6 : (f[0]<0? x0-1.0 : x1+1.0), py = f[1]? (f[1]<0? y0-1.0 : y1+1.0) : y1+0.6;
+    const lat=f[1]?[1,0]:[0,1], at=(dl,h)=>P(px+lat[0]*dl,py+lat[1]*dl,fz+h);
+    const parts=[[[-0.12,0],[0,0.85]],[[0.12,0],[0,0.85]],[[0,0.85],[0,1.45]],[[-0.22,0.95],[0,1.4]],[[0.22,0.95],[0,1.4]]];
+    ctx.beginPath(); for(const [a,b] of parts) seg(at(a[0],a[1]),at(b[0],b[1])); ctx.strokeStyle="#6a6d76"; ctx.lineWidth=2; ctx.stroke();
+    const hc=at(0,1.645), ht=at(0,1.75); if(hc.ok&&ht.ok){ ctx.beginPath(); ctx.arc(hc.x,hc.y,Math.max(2,Math.hypot(hc.x-ht.x,hc.y-ht.y)),0,Math.PI*2); ctx.stroke(); }
+  }
+  // canopy box + sections
+  if(S.show.canopy){
+    const [x0,x1,y0,y1]=canopyRect(), t=Z+CANOPY.D;
+    ctx.beginPath(); poly([[x0,y0,Z],[x1,y0,Z],[x1,y1,Z],[x0,y1,Z]],true); ctx.fillStyle="rgba(90,110,160,0.08)"; ctx.fill();
+    ctx.beginPath(); poly([[x0,y0,Z],[x1,y0,Z],[x1,y1,Z],[x0,y1,Z]],true); poly([[x0,y0,t],[x1,y0,t],[x1,y1,t],[x0,y1,t]],true);
+    for(const [x,y] of [[x0,y0],[x1,y0],[x1,y1],[x0,y1]]) seg(P(x,y,Z),P(x,y,t));
+    ctx.strokeStyle="#5a6ea0"; ctx.lineWidth=1; ctx.stroke();
+    // section splits along long side
+    ctx.beginPath(); ctx.setLineDash([5,4]);
+    const s1=CANOPY.sec[0], s2=CANOPY.sec[0]+CANOPY.sec[1];
+    for(const s of [s1,s2]){ if(X.longX){ const x=x0+s; seg(P(x,y0,Z),P(x,y1,Z)); seg(P(x,y0,t),P(x,y0,Z)); } else { const y=y0+s; seg(P(x0,y,Z),P(x1,y,Z)); seg(P(x0,y,t),P(x0,y,Z)); } }
+    ctx.strokeStyle="#4a5a88"; ctx.stroke(); ctx.setLineDash([]);
+    const lp=P(x0,y1,t); if(lp.ok){ ctx.font="10px Courier New, monospace"; ctx.fillStyle="#7d8fc0"; ctx.fillText("canopy 115 × 70 in (approx. position)",lp.x,lp.y-6); }
+  }
+  // axis cross at pattern centre
+  if(S.show.axes){
+    const o=P(X.cx,X.cy,Z+0.01), arm=0.4;
+    [[arm,0,"#ff4444","+X"],[0,arm,"#44ff44","+Y"]].forEach(([dx,dy,c,lab])=>{ const e=P(X.cx+dx,X.cy+dy,Z+0.01); if(!o.ok||!e.ok) return;
+      ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(e.x,e.y); ctx.strokeStyle=c; ctx.lineWidth=2; ctx.stroke(); label3D(X.cx+dx*1.25,X.cy+dy*1.25,Z+0.01,lab,c,c+"88"); });
+    const e=P(X.cx,X.cy,Z+0.01+arm); if(o.ok&&e.ok){ ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(e.x,e.y); ctx.strokeStyle="#4488ff"; ctx.stroke(); }
+  }
+  // holes
+  if(S.show.holes){
+    ctx.fillStyle="#56607a";
+    for(const b of R.bulbs){ const p=P(b.x,b.y,Z); if(!p.ok) continue; const r=Math.max(1,0.006*p.s); ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill(); }
+  }
+  // comparison ghosts
+  if(C && S.colorBy==="delta"){
+    ctx.strokeStyle="#9a9aff"; ctx.lineWidth=1; ctx.globalAlpha=0.6;
+    for(const b of R.bulbs){ if(!b.o || (Math.abs(b.dc)<=0.0005 && b.dm<=0.0005)) continue;
+      const a=P(b.o.x,b.o.y,b.o.bz), c=P(b.x,b.y,b.bz); if(!a.ok||!c.ok) continue;
+      ctx.beginPath(); ctx.arc(a.x,a.y,Math.max(2,0.008*a.s),0,Math.PI*2); ctx.moveTo(a.x,a.y); ctx.lineTo(c.x,c.y); ctx.stroke(); }
+    ctx.globalAlpha=1;
+  }
+  // drops
+  if(S.op>0){ ctx.lineWidth=1;
+    for(const b of R.bulbs){ const a=P(b.x,b.y,b.z), c=P(b.x,b.y,b.bz); if(!a.ok||!c.ok) continue;
+      ctx.globalAlpha= S.cur!=null && b.id!==S.cur ? S.op*0.6 : S.op; ctx.strokeStyle=b.id===S.cur?"#ff44cc":colorOf(b);
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(c.x,c.y); ctx.stroke(); }
+    ctx.globalAlpha=1; }
+  // close pairs
+  if(S.show.close){ ctx.strokeStyle="#ff7a45"; ctx.lineWidth=1.5; ctx.beginPath();
+    for(const {a,b} of closePairs()) seg(P(a.x,a.y,a.bz),P(b.x,b.y,b.bz)); ctx.stroke(); }
+  // bulbs
+  proj=[];
+  for(const b of R.bulbs){ const p=P(b.x,b.y,b.bz); if(p.ok) proj.push({b,p}); }
+  proj.sort((u,v)=>v.p.d-u.p.d);
+  for(const {b,p} of proj){
+    let r=Math.max(1.2,(S.pt*0.012/2)*p.s); if(b.id===S.hover||b.id===S.cur) r=Math.max(r*1.6,4);
+    ctx.fillStyle=b.id===S.cur?"#ff44cc":colorOf(b); ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
+  }
+  // labels
+  if(S.show.labels){ ctx.font="10px Courier New, monospace"; ctx.fillStyle="#c8c8d0";
+    for(const {b,p} of proj) ctx.fillText(b.lab||String(b.id),p.x+4,p.y-4); }
+  // selected / hover drop label
+  for(const id of [S.cur,S.hover]){ if(id==null) continue; const b=R.byId.get(id); if(!b) continue; const a=P(b.x,b.y,b.z), c=P(b.x,b.y,b.bz); if(!a.ok||!c.ok) continue;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(c.x,c.y); ctx.strokeStyle=id===S.cur?"#ff44cc":"#88ddff"; ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(c.x,c.y,7,0,Math.PI*2); ctx.stroke();
+    if(!S.plan) label3D(b.x,b.y,(b.z+b.bz)/2,`${sh(b)}  ${f3(b.cable)} m`,id===S.cur?"#ff88dd":"#88ddff",id===S.cur?"#ff44cc66":"#88ddff55");
+    else label3D(b.x,b.y,b.bz,sh(b),"#ff88dd","#ff44cc66"); }
+  // measurement
+  if(S.mA!=null){ const a=R.byId.get(S.mA), pa=P(a.x,a.y,a.bz); ctx.strokeStyle="#ffcc33"; ctx.lineWidth=1.5;
+    if(pa.ok){ ctx.beginPath(); ctx.arc(pa.x,pa.y,8,0,Math.PI*2); ctx.stroke(); }
+    if(S.mB!=null){ const b=R.byId.get(S.mB), pb=P(b.x,b.y,b.bz);
+      if(pa.ok&&pb.ok){ ctx.setLineDash([6,4]); ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(pb.x,pb.y,8,0,Math.PI*2); ctx.stroke();
+        label3D((a.x+b.x)/2,(a.y+b.y)/2,(a.bz+b.bz)/2,f3(Math.hypot(a.x-b.x,a.y-b.y,a.bz-b.bz))+" m","#ffcc33","#ffcc3388"); } } }
+}
+
+/* ---------- picking + tooltip ---------- */
+function pick(mx,my){ let best=null,bd=12*12; for(let i=proj.length-1;i>=0;i--){ const {b,p}=proj[i]; const d=(p.x-mx)**2+(p.y-my)**2; if(d<bd){bd=d;best=b.id;} } return best; }
+const tipEl=$("tooltip");
+function tipText(b){
+  const L=[b.lab? (R.col.id>=0? `${b.lab}   ·   index ${b.id}` : b.lab) : `INDEX ${b.id}`+(R.col.id<0?" (row number — no index column)":"")];
+  L.push(`cable   ${f3(b.cable)} m  =  ${inch(b.cable)}  =  ${ftin(b.cable)}`);
+  L.push(`bulb    ${f3(b.bz-S.floorZ)} m above floor  (CSV z ${f3(b.bz)})`);
+  const dx=b.x-X.cx, dy=b.y-X.cy;
+  L.push("--- hole position ---");
+  L.push(R.unit!==1? `L&F     X ${f2(b.rx/IN)}"  Y ${f2(b.ry/IN)}"` : `CSV     (${f3(b.rx)}, ${f3(b.ry)}, ${f3(b.z)}) m`);
+  L.push(`from centre (canopy view)  dx ${dx>=0?"+":""}${f3(dx)} m (${inch(dx)})  dy ${dy>=0?"+":""}${f3(dy)} m (${inch(dy)})`);
+  const n=X.nearest.get(b); if(n&&n.o) L.push(`nearest bulb  ${nm(n.o)}  ${f3(n.d)} m (3D, ${inch(n.d)})`);
+  if(b.cable<MIN_CABLE) L.push(`! shorter than 18" minimum cable`);
+  if(C){ L.push(`--- vs ${C.name} ---`);
+    if(!b.o) L.push("no matching "+(X.cmp&&X.cmp.byLab?"ID":"index"));
+    else { L.push(`cable   ${f3(b.o.cable)} → ${f3(b.cable)} m   Δ ${b.dc>=0?"+":""}${f3(b.dc)} m (${inch(b.dc)})`+(S.cmpBy==="pos"?"  (same room spot)":""));
+      if(S.cmpBy==="pos") L.push(`nearest hole there: ${sh(b.o.near)}, ${f3(b.o.nearD)} m away`);
+      else if(b.dm>0.0005) L.push(`same ID was at (${f3(b.o.x)}, ${f3(b.o.y)}) — moved ${f3(Math.hypot(b.x-b.o.x,b.y-b.o.y))} m in plan`); } }
+  L.push("--- raw row ---"); R.head.forEach((h,i)=>{ if(b.raw[i]!==undefined) L.push(`${h}: ${b.raw[i]}`); });
+  return L.join("\n");
+}
+function tip(cx,cy,id){
+  if(id==null){ tipEl.style.display="none"; return; }
+  tipEl.textContent=tipText(R.byId.get(id)); tipEl.style.display="block";
+  const w=tipEl.offsetWidth,h=tipEl.offsetHeight; let l=cx+16,t=cy-10;
+  if(l+w>innerWidth-8) l=cx-w-16; if(t+h>innerHeight-8) t=innerHeight-h-8; tipEl.style.left=Math.max(8,l)+"px"; tipEl.style.top=Math.max(8,t)+"px";
+}
+
+/* ---------- pointer ---------- */
+const ptr=new Map(); let mode=null,down=null,moved=false,pinch=null;
+cvs.addEventListener("pointerdown",e=>{ cvs.setPointerCapture(e.pointerId); ptr.set(e.pointerId,{x:e.clientX,y:e.clientY}); down={x:e.clientX,y:e.clientY}; moved=false;
+  if(ptr.size===2){ const [a,b]=[...ptr.values()]; pinch={d:Math.hypot(a.x-b.x,a.y-b.y),mx:(a.x+b.x)/2,my:(a.y+b.y)/2}; mode="pinch"; }
+  else { mode=(e.button===2||e.shiftKey||(S.plan&&e.button===0&&e.altKey))?"pan":"orbit"; cvs.classList.add("dragging"); } });
+cvs.addEventListener("pointermove",e=>{
+  if(!ptr.has(e.pointerId)){ if(e.pointerType==="mouse"&&R){ const id=pick(e.clientX,e.clientY); if(id!==S.hover){S.hover=id; draw();} tip(e.clientX,e.clientY,id);} return; }
+  const pv=ptr.get(e.pointerId), dx=e.clientX-pv.x, dy=e.clientY-pv.y; ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(Math.abs(e.clientX-down.x)+Math.abs(e.clientY-down.y)>4) moved=true; else return; tip(0,0,null);
+  if(mode==="pinch"&&ptr.size===2){ const [a,b]=[...ptr.values()], d=Math.hypot(a.x-b.x,a.y-b.y), mx=(a.x+b.x)/2, my=(a.y+b.y)/2; zoom(d/pinch.d); pan(mx-pinch.mx,my-pinch.my); pinch={d,mx,my}; }
+  else if(mode==="pan"||(mode==="orbit"&&S.plan)) pan(dx,dy);
+  else if(mode==="orbit"){ S.theta-=dx*0.006; S.phi=Math.max(-1.55,Math.min(1.55,S.phi+dy*0.006)); }
+  draw(); });
+function up(e){ ptr.delete(e.pointerId); if(ptr.size<2) pinch=null;
+  if(ptr.size===0){ cvs.classList.remove("dragging"); if(!moved&&mode!=="pinch"){ const id=pick(e.clientX,e.clientY); click(id); if(e.pointerType!=="mouse") tip(e.clientX,e.clientY,id); } mode=null; } }
+cvs.addEventListener("pointerup",up); cvs.addEventListener("pointercancel",up);
+cvs.addEventListener("pointerleave",()=>{ if(ptr.size===0&&S.hover!=null){ S.hover=null; tip(0,0,null); draw(); } });
+cvs.addEventListener("contextmenu",e=>e.preventDefault());
+cvs.addEventListener("wheel",e=>{ e.preventDefault(); zoom(Math.exp(-e.deltaY*0.0012)); draw(); },{passive:false});
+function pan(dx,dy){ const k=S.ortho?1/S.ppm:S.dist/cam.focal; for(let i=0;i<3;i++) S.target[i]-=(dx*cam.right[i]-dy*cam.up[i])*k; }
+function zoom(f){ if(S.ortho) S.ppm=Math.max(5,Math.min(8000,S.ppm*f)); else S.dist=Math.max(0.3,Math.min(200,S.dist/f)); }
+addEventListener("keydown",e=>{ if(e.target.tagName==="INPUT") return; if(e.key==="Escape"){ if(S.measuring) stopMeasure(); else select(null); } });
+
+/* ---------- selection + measure ---------- */
+function click(id){
+  if(S.measuring){ if(id==null) return; if(S.mA==null||S.mB!=null){S.mA=id;S.mB=null;} else S.mB=id; measureOut(); draw(); return; }
+  select(id);
+}
+function select(id){ S.cur=id; $("findIn").value= id==null?"":(R.byId.get(id).lab||String(id)); draw(); }
+const labKey=b=>{ const m=/^#?([A-Z]+)(\d+)$/i.exec(b.lab||""); return m? [m[1].toUpperCase(),+m[2]] : ["",b.id]; };
+const sortedIds=()=>[...R.byId.values()].sort((p,q)=>{ const a=labKey(p),b=labKey(q); return a[0]<b[0]?-1:a[0]>b[0]?1:a[1]-b[1]; }).map(b=>b.id);
+function step(d){ const ids=sortedIds(); let i=ids.indexOf(S.cur); i= i<0? (d>0?0:ids.length-1) : Math.max(0,Math.min(ids.length-1,i+d)); select(ids[i]); }
+$("prevBtn").onclick=()=>step(-1); $("nextBtn").onclick=()=>step(1);
+$("findIn").addEventListener("keydown",e=>{ if(e.key==="Enter"){ const s=e.target.value.trim(), k=s.replace(/^#/,"").toUpperCase(), v=Number(s);
+  const b=R.byLab.get(k)||R.byLab.get(k.replace(/^([A-Z]+)(\d)$/,"$10$2"))||(s!==""&&R.byId.get(v)); if(b) select(b.id); else e.target.style.borderColor="#aa4444"; } else e.target.style.borderColor=""; });
+const mBtn=$("measureBtn"), mOut=$("measureOut");
+mBtn.onclick=()=>S.measuring?stopMeasure():startMeasure();
+function startMeasure(){ S.measuring=true; S.mA=S.mB=null; mBtn.classList.add("on"); mBtn.textContent="Measuring… click two bulbs"; cvs.classList.add("measuring"); measureOut(); draw(); }
+function stopMeasure(){ S.measuring=false; S.mA=S.mB=null; mBtn.classList.remove("on"); mBtn.textContent="Measure between two bulbs"; cvs.classList.remove("measuring"); mOut.style.display="none"; draw(); }
+function measureOut(){ mOut.style.display="block"; if(S.mA==null){ mOut.textContent="Click the first bulb"; return; }
+  const a=R.byId.get(S.mA); if(S.mB==null){ mOut.innerHTML=`From <b>${esc(sh(a))}</b> — click the second bulb`; return; }
+  const b=R.byId.get(S.mB), d3=Math.hypot(a.x-b.x,a.y-b.y,a.bz-b.bz), dp=Math.hypot(a.x-b.x,a.y-b.y), dv=Math.abs(a.bz-b.bz);
+  mOut.innerHTML=`<b>${esc(sh(a))} → ${esc(sh(b))}</b>  straight <b>${f3(d3)} m</b> (${inch(d3)}) · plan/hole-to-hole ${f3(dp)} m (${inch(dp)}) · vertical ${f3(dv)} m (${inch(dv)})`; }
+
+/* ---------- side panels ---------- */
+function renderLegend(){
+  let h=`<div>Data: <b>${esc(R.name)}</b> · ${R.bulbs.length} bulbs</div>
+    <div>x ${f3(X.minX)} … ${f3(X.maxX)} m <span style="color:#555">(${f3(X.maxX-X.minX)})</span></div>
+    <div>y ${f3(X.minY)} … ${f3(X.maxY)} m <span style="color:#555">(${f3(X.maxY-X.minY)})</span></div>
+    <div>z ${X.flat? f3(X.minZ)+" m (flat canopy)" : f3(X.minZ)+" … "+f3(X.maxZ)+" m"}</div>
+    <div>cable ${f3(X.minC)} – ${f3(X.maxC)} m <span style="color:#555">(${esc(R.head[R.col.cable])})</span></div>`;
+  const bar=(css,lo,hi)=>`<div class="legend-bar" style="background:linear-gradient(90deg,${css})"></div><div class="legend-ends"><span>${lo}</span><span>${hi}</span></div>`;
+  const grad=f=>[0,0.25,0.5,0.75,1].map(f).join(",");
+  if(S.colorBy==="cable") h+=bar(grad(ramp),f2(X.minC)+" m short",f2(X.maxC)+" m long");
+  else if(S.colorBy==="bulbz") h+=bar(grad(rampZ),"low bulb","high bulb");
+  else if(S.colorBy==="panel") h+= X.panels.length? X.panels.map((g,i)=>`<div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${hsl((0.08+i*0.381966)%1,0.85,0.6)};margin-right:8px"></span>Panel ${esc(g)} · ${R.bulbs.filter(b=>b.panel===g).length}</div>`).join("") : `<div>No Panel column in this file</div>`;
+  else if(S.colorBy==="group") h+="ABCDEF".split("").map((g,i)=>`<div><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${hsl((0.08+i*0.381966)%1,0.85,0.6)};margin-right:8px"></span>#${g}xx · ${R.bulbs.filter(b=>labKey(b)[0]===g).length}</div>`).join("");
+  else if(S.colorBy==="index") h+=bar(grad(u=>hsl(u*0.85,0.9,0.6)),"#"+X.minId,"#"+X.maxId);
+  else if(S.colorBy==="delta") h+=bar([hsl(0.58,0.9,0.5),hsl(0.58,0.9,0.75),"#8a8a95",hsl(0,0.9,0.75),hsl(0,0.9,0.5)].join(","),"−"+f3(X.maxAbsD)+" shorter","longer +"+f3(X.maxAbsD))+`<div style="color:#9a9aff">○ ghost = comparison bulb position</div>`;
+  $("legend").innerHTML=h;
+}
+let statsCollapsed=innerWidth<=760;
+function renderStats(){
+  const el=$("rigStats"), B=R.bulbs, ok=t=>`<span class="ok">✓ ${t}</span>`, warn=t=>`<span class="warn">! ${t}</span>`;
+  const a=id=>`<a data-id="${esc(id)}">${esc(sh(R.byId.get(id)))}</a>`;
+  const cp=closePairs();
+  let h=`<div class="h" id="statsHead">Checks ${statsCollapsed?"▸":"▾"}</div><div class="body">`;
+  h+=`<div>${B.length===300? ok("300 bulbs") : warn(B.length+" bulbs (expected 300)")}</div>`;
+  if(R.col.id>=0) h+=`<div>${X.dupIds? warn(X.dupIds+" duplicate index") : ok("indices unique")}${X.missingIds.length? " "+warn("gaps: "+X.missingIds.slice(0,10).join(", ")) : ` <span class="s">${X.minId}–${X.maxId}</span>`}</div>`;
+  if(R.skipped.length) h+=`<div class="s">skipped ${R.skipped.length} non-bulb row(s): ${esc(R.skipped.join(", "))}</div>`;
+  if(R.orient&&R.orient.ok&&R.rotApplied) h+=`<div class="s">view rotated ${degs(-R.rotApplied)}° to match the L&F drawing</div>`;
+  if(R.unit!==1) h+=`<div class="s">x/y read in inches (${esc(R.head[R.col.x])}) and converted to metres</div>`;
+  if(R.noZ) h+=`<div>${warn("no z column: hole height borrowed from the other file")}</div>`;
+  if(R.bad.length) h+=`<div>${warn(R.bad.length+" unreadable row(s): line "+R.bad.slice(0,8).join(", "))}</div>`;
+  if(R.col.lab>=0){ const labs=R.bulbs.map(b=>b.lab).filter(Boolean), dl=labs.length-new Set(labs).size, ml=R.bulbs.length-labs.length;
+    h+=`<div>${dl||ml? warn((dl?dl+" duplicate ID ":"")+(ml?ml+" missing ID":"")) : ok(labs.length+" IDs unique ("+esc(R.head[R.col.lab])+")")}</div>`; }
+  h+=`<div>${X.flat? ok("all holes at z "+f3(X.minZ)) : warn("hole z varies "+f3(X.minZ)+"–"+f3(X.maxZ))}</div>`;
+  h+=`<div>${X.dupPos.length? warn(X.dupPos.length+" holes share a position") : ok("no duplicate hole positions")}</div>`;
+  h+=`<div>min hole spacing <b>${f3(X.minHole.d)} m</b> (${inch(X.minHole.d)}) ${a(X.minHole.a.id)}–${a(X.minHole.b.id)}</div>`;
+  h+=`<div>${X.short.length? warn(X.short.length+" cable(s) under 18\" min: "+X.short.slice(0,8).map(b=>a(b.id)).join(" ")) : ok("all cables ≥ 18\" (0.457 m) min")}</div>`;
+  h+=`<div class="h">Canopy fit (centred, 115 × 70 in)</div>`;
+  h+=`<div>hole pattern ${inch(X.marg.L)} × ${inch(X.marg.Wd)}</div>`;
+  h+=`<div>edge margin ≈ ${inch(X.marg.long)} long side · ${inch(X.marg.short)} short side <span class="s">(drawing insets 3 7/16 / 3 1/4)</span></div>`;
+  h+=`<div class="h">Cable lengths</div>`;
+  h+=`<div>min <b>${f3(X.minC)}</b> · max <b>${f3(X.maxC)}</b> · mean ${f3(X.mean)} m</div>`;
+  h+=`<div>total <b>${f2(X.total)} m</b> (${f2(X.total/0.3048)} ft)</div>`;
+  h+=`<div>lowest bulb ${a(X.lowest.id)} <b>${f3(X.lowest.bz-S.floorZ)} m</b> above floor</div>`;
+  h+=`<canvas id="hist"></canvas><div class="s">cable length distribution (20 bins)</div>`;
+  h+=`<div class="h">Bulb clearance (&lt; ${f3(S.thr)} m)</div>`;
+  h+=`<div>closest pair <b>${f3(X.pairs[0].d)} m</b> ${a(X.pairs[0].a.id)}–${a(X.pairs[0].b.id)}</div>`;
+  h+= cp.length? `<div>${warn(cp.length+" pair(s) under threshold")}</div><div>`+cp.slice(0,30).map(p=>`${a(p.a.id)}–${a(p.b.id)} <span class="s">${f3(p.d)}</span>`).join(" · ")+(cp.length>30?" …":"")+`</div>` : `<div>${ok("none under threshold")}</div>`;
+  if(X.cmp){ const c=X.cmp;
+    h+=`<div class="h">vs ${esc(C.name)}</div>`;
+    h+= S.cmpBy==="pos"? `<div class="s">compared at the same room position (comparison interpolated from its 4 nearest holes)</div><div>mean |Δ| <b>${f3(c.meanAbs)} m</b> · ${c.changed} differ by &gt; 0.5 mm</div>`
+      : `<div class="s">matched by ${c.byLab?"ID":"index"}</div><div>${c.n} matched · <b>${c.changed}</b> cable(s) changed · <b>${c.moved}</b> hole(s) moved</div>`;
+    if(c.maxD.b) h+=`<div>largest cable change ${a(c.maxD.b.id)} <b>${c.maxD.v>=0?"+":""}${f3(c.maxD.v)} m</b></div>`;
+    if(c.maxM.b && c.maxM.v>0.0005) h+=`<div>largest move ${a(c.maxM.b.id)} ${f3(c.maxM.v)} m</div>`;
+    h+=`<div>total cable ${f2(c.total)} → ${f2(X.total)} m</div>`;
+    if(c.onlyA.length||c.onlyB.length) h+=`<div>${warn(`unmatched: ${c.onlyA.length} only here, ${c.onlyB.length} only in comparison`)}</div>`;
+  }
+  h+=`</div>`;
+  el.innerHTML=h; el.classList.toggle("collapsed",statsCollapsed);
+  $("statsHead").onclick=()=>{ statsCollapsed=!statsCollapsed; renderStats(); };
+  el.querySelectorAll("a[data-id]").forEach(x=>x.onclick=()=>select(Number(x.dataset.id)));
+  drawHist();
+}
+function drawHist(){
+  const c=$("hist"); if(!c||statsCollapsed) return; const w=c.clientWidth, hh=c.clientHeight, d=devicePixelRatio||1;
+  c.width=w*d; c.height=hh*d; const g=c.getContext("2d"); g.scale(d,d);
+  const N=20, bins=new Array(N).fill(0), span=(X.maxC-X.minC)||1;
+  for(const b of R.bulbs) bins[Math.min(N-1,Math.floor((b.cable-X.minC)/span*N))]++;
+  const mx=Math.max(...bins), bw=w/N;
+  bins.forEach((v,i)=>{ const bh=(v/mx)*(hh-14); g.fillStyle=ramp((i+0.5)/N); g.fillRect(i*bw+1,hh-12-bh,bw-2,bh); });
+  g.fillStyle="#777"; g.font="10px Courier New, monospace"; g.fillText(f2(X.minC),0,hh-1); const t=f2(X.maxC)+" m"; g.fillText(t,w-g.measureText(t).width,hh-1);
+}
+function renderFloor(){ if(R.noZ){ $("floorHint").textContent=`This file has no heights: the floor is set so the holes sit at the same height as the previous file (or 2 m below the lowest bulb if there is none). Enter the real floor if you know it.`; return; } $("floorHint").textContent=`Holes ${f3(X.maxZ-S.floorZ)} m above this floor; lowest bulb ${f3(X.minBZ-S.floorZ)} m. CSV z appears to be height above floor — set if the venue datum differs.`; }
+
+/* ---------- loading ---------- */
+function showErr(m){ const e=$("err"); e.textContent=m; e.style.display="block"; }
+$("err").onclick=()=>{$("err").style.display="none";};
+function load(text,name){
+  try{ R=parse(text,name); }catch(err){ showErr(err.message); return; }
+  detectOrient(R); applyOrient(R);
+  S.cur=S.hover=null; if(S.measuring) stopMeasure();
+  analyse();
+  // no heights in file: hang it at the same hole height as the last dataset, so heights line up when switching
+  S.floorZ = R.noZ? +(S.lastHoleH!=null? X.maxZ-S.lastHoleH : X.minBZ-2.0).toFixed(3) : 0; $("floorIn").value=S.floorZ;
+  if(!R.noZ) S.lastHoleH = X.maxZ - S.floorZ;
+  const di=DS.findIndex(s=>s.dataset.name===name); $("dataSel").value= di>=0? String(di) : "file";
+  $("dataName").textContent=name; renderAll(); preset(S.plan? "top" : "front"); // same framing every time a CSV is switched
+}
+function loadCmp(text,name){
+  if(text==null){ C=null; X.cmp=null; const o=$("colorSel").querySelector('[value="delta"]'); o.disabled=true; if(S.colorBy==="delta"){ S.colorBy="cable"; $("colorSel").value="cable"; } $("cmpHint").textContent="No comparison."; renderAll(); draw(); return; }
+  try{ C=parse(text,name); }catch(err){ showErr(err.message); return; }
+  detectOrient(C); applyOrient(C);
+  analyseCmp(); const o=$("colorSel").querySelector('[value="delta"]'); o.disabled=false;
+  const di=DS.findIndex(s=>s.dataset.name===name); $("cmpSel").value= di>=0? String(di) : "file";
+  $("cmpHint").textContent=`Comparing with "${name}". Colour by "Δ cable vs comparison" to see changes.`; renderAll(); draw();
+}
+function renderOrient(){ const o=R.orient, h=$("orientHint");
+  if(!o||!o.ok){ h.textContent="No #A01/#E05 in this file, so it is drawn in its own CSV axes."; return; }
+  h.textContent = !S.orientCanopy? "Drawn in the CSV's own axes." :
+    (R.rotApplied? `This file's coordinates are turned ${degs(-R.rotApplied)}° from the L&F drawing; the view is rotated back so #A01 sits bottom-left. Tooltip coordinates are the file's own.` : "This file already matches the L&F drawing orientation.")
+    + (o.mirrored? " Warning: #B01 is not above #A01, so this file looks mirrored." : ""); }
+function renderAll(){ renderLegend(); renderStats(); renderFloor(); renderOrient(); }
+const readFile=(f,cb)=>{ const r=new FileReader(); r.onload=()=>cb(r.result,f.name); r.readAsText(f); };
+$("openBtn").onclick=()=>$("file").click();
+$("file").onchange=e=>{ const f=e.target.files[0]; if(f) readFile(f,load); e.target.value=""; };
+$("cmpBtn").onclick=()=>$("cmpFile").click();
+$("cmpFile").onchange=e=>{ const f=e.target.files[0]; if(f) readFile(f,loadCmp); e.target.value=""; };
+let dragN=0;
+addEventListener("dragenter",e=>{ e.preventDefault(); dragN++; $("drop").classList.add("on"); });
+addEventListener("dragleave",()=>{ if(--dragN<=0){ dragN=0; $("drop").classList.remove("on"); } });
+addEventListener("dragover",e=>e.preventDefault());
+addEventListener("drop",e=>{ e.preventDefault(); dragN=0; $("drop").classList.remove("on"); const f=e.dataTransfer.files[0]; if(f) readFile(f,load); });
+
+/* ---------- controls ---------- */
+$("hideBtn").onclick=()=>{ const c=$("ui").classList.toggle("collapsed"); $("hideBtn").textContent=c?"Show controls":"Hide controls"; };
+$("orthoBtn").onclick=()=>{ setOrtho(!S.ortho); if(S.ortho) S.ppm=cam.focal/S.dist; else if(S.plan) S.plan=false; draw(); };
+document.querySelectorAll("[data-cam]").forEach(b=>b.onclick=()=>preset(b.dataset.cam));
+$("frontSel").onchange=e=>{ S.front=({"-y":[0,-1],"+y":[0,1],"-x":[-1,0],"+x":[1,0]})[e.target.value]; preset("front"); };
+$("colorSel").onchange=e=>{ S.colorBy=e.target.value; renderLegend(); draw(); };
+$("clearIn").oninput=e=>{ const v=Number(e.target.value); if(Number.isFinite(v)&&v>=0){ S.thr=v; renderStats(); draw(); } };
+$("floorIn").oninput=e=>{ const v=Number(e.target.value); if(Number.isFinite(v)){ S.floorZ=v; renderAll(); draw(); } };
+const chk={cCanopy:"canopy",cHoles:"holes",cLabels:"labels",cGrid:"grid",cRuler:"ruler",cPerson:"person",cAxes:"axes",cClose:"close"};
+for(const [id,k] of Object.entries(chk)) $(id).onchange=e=>{ S.show[k]=e.target.checked; draw(); };
+$("ptSize").oninput=e=>{ S.pt=+e.target.value; $("vPt").textContent=S.pt.toFixed(1); draw(); };
+$("dropOp").oninput=e=>{ S.op=+e.target.value; $("vOp").textContent=S.op.toFixed(2); draw(); };
+
+function resize(){ DPR=devicePixelRatio||1; W=innerWidth; H=innerHeight; cvs.width=W*DPR; cvs.height=H*DPR; cam=camera(); draw(); }
+const ro=new ResizeObserver(()=>{ resize(); drawHist(); }); ro.observe(document.body);
+DPR=devicePixelRatio||1; W=innerWidth; H=innerHeight; cvs.width=W*DPR; cvs.height=H*DPR; cam=camera();
+const DS=[...document.querySelectorAll('script[data-ds]')];
+$("dataSel").innerHTML=DS.map((s,i)=>`<option value="${i}">${esc(s.dataset.label)}</option>`).join("")+`<option value="file" disabled>(opened file)</option>`;
+$("dataSel").onchange=e=>{ const s=DS[+e.target.value]; if(s) load(s.textContent.trim(), s.dataset.name); };
+$("cmpSel").innerHTML=`<option value="none">None</option>`+DS.map((s,i)=>`<option value="${i}">${esc(s.dataset.label)}</option>`).join("")+`<option value="file" disabled>(opened file)</option>`;
+$("cmpSel").onchange=e=>{ const s=DS[+e.target.value]; if(s) loadCmp(s.textContent.trim(), s.dataset.name); else loadCmp(null); };
+$("cOrient").onchange=e=>{ S.orientCanopy=e.target.checked; applyOrient(R); applyOrient(C); analyse(); renderAll(); preset(S.plan? "top" : "front"); };
+$("cmpBy").onchange=e=>{ S.cmpBy=e.target.value; analyseCmp(); renderAll(); draw(); };
+load(DS[0].textContent.trim(), DS[0].dataset.name);
+}
+</script>
+</body></html>
